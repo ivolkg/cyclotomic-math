@@ -16,10 +16,10 @@
 //! Therefore, the DEVELOPER has to call the [`PolynomialRingZq::reduce`], whenever
 //! a computation may exceed the modulus, because it is not reduced automatically
 
-use super::{ModulusPolynomialRingZq, Zq};
+use super::{MatZq, ModulusPolynomialRingZq, Zq};
 use crate::{
     integer::{PolyOverZ, Z},
-    traits::{GetCoefficient, Pow},
+    traits::{GetCoefficient, GetEntry, Pow, SetEntry},
 };
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
@@ -102,6 +102,164 @@ impl PolynomialRingZq {
 
         coeffs
     }
+
+    fn crt(&self, prime: usize, prime_power: usize, rou: Zq) -> Vec<Zq> {
+        // Currently only using prime power decomposition, as we might not need decomposition for all factors in NTT
+        // get rou from ModulusPoly?
+        let q = rou.get_mod().to_string().parse::<u32>().unwrap();
+        let domain_size = prime.pow(prime_power as u32) as u32;
+        let resized_power = q / domain_size;
+        let omega = rou.pow(resized_power).unwrap();
+        let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
+        let mut omega_powers = Vec::new();
+        for i in 0..prime.pow(prime_power as u32) {
+            omega_powers.push(current_omega_power.clone());
+            current_omega_power = &current_omega_power * &omega;
+        }
+
+        let poly = &self.poly;
+        let m = self.get_mod().get_degree() as usize;
+        let m_prime = m / prime;
+
+        let mut coeffs = (0..domain_size) // Unclear if the coeficients are order from the least power to the greater, probably is
+            .map(|i| {
+                let coeff_z = poly.get_coeff(i).unwrap();
+                Zq::from_z_modulus(&coeff_z, q)
+            })
+            .collect::<Vec<_>>();
+
+        let prime_omegas = omega_powers
+            .iter()
+            .step_by(m_prime)
+            .map(|w| w.clone())
+            .collect::<Vec<_>>();
+
+        let crt_prime = crt_prime(&prime_omegas);
+        if prime_power == 1 {
+            let coeffs_mat = MatZq::new(prime - 1, 1, q); // Theres got to be  abetter way or implment Mat * Vec multiplication
+            let res = crt_prime * coeffs_mat;
+            for i in 0..prime - 1 {
+                coeffs[i] = res.get_entry(i, 0).unwrap();
+            }
+            return coeffs;
+        }
+
+        stride_permutation(prime, &mut coeffs);
+
+        // _ variables because it should modify coeffs
+        let _ = coeffs // TODO: Parallelize
+            .chunks_exact_mut(prime - 1) // phi(p) = p - 1
+            .map(|coeffs_chunk| {
+                let mut coeffs_mat = MatZq::new(prime, 1, q);
+                for (i, coeff) in coeffs_chunk.iter().enumerate() {
+                    coeffs_mat.set_entry(i, 0, coeff).unwrap();
+                }
+                let res = crt_prime.clone() * coeffs_mat;
+                for i in 0..coeffs_chunk.len() {
+                    coeffs_chunk[i] = res.get_entry(i, 0).unwrap();
+                }
+            });
+
+        inverse_stride_permutation(prime, &mut coeffs);
+
+        let t_hat = twiddle_hat_factors(prime, &omega_powers);
+        for (twiddle_factor, coeff) in t_hat.iter().zip(coeffs.iter_mut()) {
+            *coeff = &*coeff * twiddle_factor;
+        }
+
+        let m_prime_omega_powers = omega_powers
+            .iter()
+            .step_by(prime)
+            .map(|w| w.clone())
+            .collect::<Vec<_>>();
+
+        let _ = coeffs.chunks_exact_mut(m_prime).map(|coeffs_chunk| {
+            radixp_ntt(prime, prime_power - 1, &m_prime_omega_powers, coeffs_chunk);
+        });
+
+        // Note that the last stride permutation is not done
+        // This might not be needed because we will perform the inverse as well
+        coeffs
+    }
+}
+
+// Double check
+fn twiddle_hat_factors(prime: usize, omega_powers: &[Zq]) -> Vec<Zq> {
+    let euler_totient_p = prime - 1;
+    let (euler_totient_m, m_relative_primes) = euler_totient(omega_powers.len());
+    let m_prime = euler_totient_m / euler_totient_p;
+    let q = omega_powers.first().unwrap().get_mod();
+    let zero = Zq::from_z_modulus(&Z::from(0), q);
+    let mut t_hat = vec![zero; euler_totient_m];
+    for r in m_relative_primes {
+        for j in 0..euler_totient_m {
+            let index = (m_prime * r) + j;
+            t_hat[index] = omega_powers[(r * j) % (omega_powers.len())].clone();
+        }
+    }
+    t_hat
+}
+
+fn crt_prime(prime_omegas: &[Zq]) -> MatZq {
+    let (euler_totient_m, prime_relatives) = euler_totient(prime_omegas.len());
+    assert_eq!(
+        prime_omegas.len() - 1,
+        euler_totient_m,
+        "lenght is not a prime"
+    );
+    let q = prime_omegas.first().unwrap().get_mod();
+    let mut crt = MatZq::new(euler_totient_m, euler_totient_m, q);
+    for i in 1..prime_omegas.len() {
+        for j in 0..euler_totient_m {
+            crt.set_entry(i, j, prime_omegas[(i * j) % prime_omegas.len()].clone())
+                .unwrap();
+        }
+    }
+    crt
+}
+
+fn inverse_crt_prime(prime_omegas: &[Zq]) -> MatZq {
+    crt_prime(prime_omegas).inverse().unwrap()
+}
+
+fn euler_totient(m: usize) -> (usize, Vec<usize>) {
+    // (euler_totient, Z_m* i.e. prime relatives to m)
+    todo!()
+}
+
+fn stride_permutation(prime: usize, input: &mut [Zq]) {
+    let m = input.len();
+    assert_eq!(m % prime, 0);
+    let d = m / prime;
+
+    let q = input.first().unwrap().get_mod();
+    let zero = Zq::from_z_modulus(&Z::from(0), q);
+    let mut temp = vec![zero; m];
+
+    for i in 0..m - 1 {
+        let new_index = (i * d) % (m - 1);
+        temp[new_index] = input[i].clone(); // TODO: Remove clone
+    }
+    temp[m - 1] = input[m - 1].clone(); // TODO: Remove clone
+
+    input.clone_from_slice(&temp);
+}
+
+fn inverse_stride_permutation(prime: usize, input: &mut [Zq]) {
+    let m = input.len();
+    assert_eq!(m % prime, 0);
+
+    let q = input.first().unwrap().get_mod();
+    let zero = Zq::from_z_modulus(&Z::from(0), q);
+    let mut temp = vec![zero; m];
+
+    for i in 0..m - 1 {
+        let new_index = (i * prime) % (m - 1);
+        temp[new_index] = input[i].clone(); // TODO: Remove clone
+    }
+    temp[m - 1] = input[m - 1].clone(); // TODO: Remove clone
+
+    input.clone_from_slice(&temp);
 }
 
 fn radixp_ntt(prime: usize, prime_power: usize, omega_powers: &[Zq], coeffs: &mut [Zq]) {
