@@ -154,6 +154,36 @@ pub struct PolynomialRingZqNTTBasis {
     pub(crate) evals: Vec<Zq>,
 }
 
+impl PolynomialRingZqNTTBasis {
+    fn intt(&self, prime: usize, prime_power: usize, rou: Zq) -> Vec<Zq> {
+        let q = rou.get_mod().to_string().parse::<u32>().unwrap(); //compute domain outside
+        let domain_size = prime.pow(prime_power as u32) as u32;
+        let resized_power = q / domain_size;
+        let omega = rou.pow(resized_power).unwrap();
+        let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
+        let mut omega_powers = Vec::new();
+        for i in 0..prime.pow(prime_power as u32) {
+            omega_powers.push(current_omega_power.clone());
+            current_omega_power = &current_omega_power * &omega;
+        }
+
+        // inverse domain
+        omega_powers.reverse();
+        omega_powers.rotate_right(1);
+
+        let mut evals = self.evals.clone();
+        radixp_ntt(prime, prime_power, &omega_powers, &mut evals);
+
+        let nq_inv = Zq::from_z_modulus(&Z::from(domain_size), q)
+            .inverse()
+            .unwrap();
+
+        let coeffs = evals.iter_mut().map(|eval| &*eval * &nq_inv).collect();
+
+        coeffs
+    }
+}
+
 pub struct PolynomialRingZqCRTBasis {
     pub(crate) coeffs: Vec<Zq>,
 }
