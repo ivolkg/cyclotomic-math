@@ -352,3 +352,86 @@ impl PolynomialRingZqNTTBasis {
 pub struct PolynomialRingZqCRTBasis {
     pub(crate) coeffs: Vec<Zq>,
 }
+
+fn icrt(evals: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
+    // Currently only using prime power decomposition, as we might noot need decomposition for all factors in NTT
+    // get rou from ModulusPoly?
+    let q = rou.get_mod().to_string().parse::<u32>().unwrap();
+    let m = evals.len(); // Double check
+    let m_prime = m / prime;
+    let domain_size = prime.pow(prime_power as u32) as u32;
+    let resized_power = q / domain_size;
+    let omega = rou.pow(resized_power).unwrap();
+    let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
+    let mut omega_powers = Vec::new();
+    for i in 0..prime.pow(prime_power as u32) {
+        omega_powers.push(current_omega_power.clone());
+        current_omega_power = &current_omega_power * &omega;
+    }
+    // Note that the first stride permutation is not done
+    // This might not be needed because we will perform the inverse as well
+
+    // Define crt_prime here to handle the prime case fast
+    let prime_omegas = omega_powers
+        .iter()
+        .step_by(m_prime)
+        .map(|w| w.clone())
+        .collect::<Vec<_>>();
+
+    let inv_crt_prime = crt_prime(&prime_omegas).inverse().unwrap();
+    if prime_power == 1 {
+        let evals_mat = MatZq::new(prime - 1, 1, q); // Theres got to be  abetter way or implment Mat * Vec multiplication
+        let res = inv_crt_prime * evals_mat;
+        for i in 0..prime - 1 {
+            evals[i] = res.get_entry(i, 0).unwrap();
+        }
+        return;
+    }
+
+    // Perform inverse NTT_m_prime
+
+    let mut m_prime_omega_powers = omega_powers
+        .iter()
+        .step_by(prime)
+        .map(|w| w.clone())
+        .collect::<Vec<_>>();
+    m_prime_omega_powers.reverse();
+    m_prime_omega_powers.rotate_right(1);
+
+    let _ = evals.chunks_exact_mut(m_prime).map(|coeffs_chunk| {
+        // TODO: Parallelize
+        radixp_ntt(prime, prime_power - 1, &m_prime_omega_powers, coeffs_chunk);
+        let nq_inv = Zq::from_z_modulus(&Z::from(m_prime_omega_powers.len() as u32), q)
+            .inverse()
+            .unwrap();
+        for coeff in coeffs_chunk {
+            *coeff = &*coeff * nq_inv.clone();
+        }
+    });
+
+    let mut t_hat = twiddle_hat_factors(prime, &omega_powers);
+    for twiddle in t_hat.iter_mut() {
+        *twiddle = twiddle.inverse().unwrap();
+    }
+    for (twiddle_factor, coeff) in t_hat.iter().zip(evals.iter_mut()) {
+        *coeff = &*coeff * twiddle_factor;
+    }
+
+    stride_permutation(prime, evals);
+
+    // _ variables because it should modify coeffs
+    let _ = evals // TODO: Parallelize
+        .chunks_exact_mut(prime - 1) // phi(p) = p - 1
+        .map(|coeffs_chunk| {
+            let mut coeffs_mat = MatZq::new(prime, 1, q);
+            for (i, coeff) in coeffs_chunk.iter().enumerate() {
+                coeffs_mat.set_entry(i, 0, coeff).unwrap();
+            }
+            let res = inv_crt_prime.clone() * coeffs_mat;
+            for i in 0..coeffs_chunk.len() {
+                coeffs_chunk[i] = res.get_entry(i, 0).unwrap();
+            }
+        });
+
+    inverse_stride_permutation(prime, evals);
+}
