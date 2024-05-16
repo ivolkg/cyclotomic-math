@@ -77,6 +77,22 @@ impl PolynomialRingZq {
         let evals = self.ntt(prime, prime_power, rou);
         PolynomialRingZqNTTBasis { evals }
     }
+
+    fn to_crt_basis(&self, prime: usize, prime_power: usize, rou: Zq) -> PolynomialRingZqCRTBasis {
+        let poly = &self.poly;
+        let m = self.get_mod().get_degree() as usize;
+        let q = rou.get_mod().to_string().parse::<u32>().unwrap();
+        let domain_size = prime.pow(prime_power as u32) as u32;
+
+        let mut coeffs = (0..domain_size) // Unclear if the coeficients are order from the least power to the greater, probably is
+            .map(|i| {
+                let coeff_z = poly.get_coeff(i).unwrap();
+                Zq::from_z_modulus(&coeff_z, q)
+            })
+            .collect::<Vec<_>>();
+        crt(&mut coeffs, prime, prime_power, rou);
+        PolynomialRingZqCRTBasis { coeffs }
+    }
     fn ntt(&self, prime: usize, prime_power: usize, rou: Zq) -> Vec<Zq> {
         // Currently only using prime power decomposition, as we might not need decomposition for all factors in NTT
         // get rou from ModulusPoly?
@@ -102,85 +118,76 @@ impl PolynomialRingZq {
 
         coeffs
     }
+}
 
-    fn crt(&self, prime: usize, prime_power: usize, rou: Zq) -> Vec<Zq> {
-        // Currently only using prime power decomposition, as we might not need decomposition for all factors in NTT
-        // get rou from ModulusPoly?
-        let q = rou.get_mod().to_string().parse::<u32>().unwrap();
-        let domain_size = prime.pow(prime_power as u32) as u32;
-        let resized_power = q / domain_size;
-        let omega = rou.pow(resized_power).unwrap();
-        let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
-        let mut omega_powers = Vec::new();
-        for i in 0..prime.pow(prime_power as u32) {
-            omega_powers.push(current_omega_power.clone());
-            current_omega_power = &current_omega_power * &omega;
+fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
+    // Currently only using prime power decomposition, as we might noot need decomposition for all factors in NTT
+    // get rou from ModulusPoly?
+    let q = rou.get_mod().to_string().parse::<u32>().unwrap();
+    let m = coeffs.len(); // Double check
+    let m_prime = m / prime;
+    let domain_size = prime.pow(prime_power as u32) as u32;
+    let resized_power = q / domain_size;
+    let omega = rou.pow(resized_power).unwrap();
+    let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
+    let mut omega_powers = Vec::new();
+    for i in 0..prime.pow(prime_power as u32) {
+        omega_powers.push(current_omega_power.clone());
+        current_omega_power = &current_omega_power * &omega;
+    }
+
+    let prime_omegas = omega_powers
+        .iter()
+        .step_by(m_prime)
+        .map(|w| w.clone())
+        .collect::<Vec<_>>();
+
+    let crt_prime = crt_prime(&prime_omegas);
+    if prime_power == 1 {
+        let coeffs_mat = MatZq::new(prime - 1, 1, q); // Theres got to be  abetter way or implment Mat * Vec multiplication
+        let res = crt_prime * coeffs_mat;
+        for i in 0..prime - 1 {
+            coeffs[i] = res.get_entry(i, 0).unwrap();
         }
+        return;
+    }
 
-        let poly = &self.poly;
-        let m = self.get_mod().get_degree() as usize;
-        let m_prime = m / prime;
+    stride_permutation(prime, coeffs);
 
-        let mut coeffs = (0..domain_size) // Unclear if the coeficients are order from the least power to the greater, probably is
-            .map(|i| {
-                let coeff_z = poly.get_coeff(i).unwrap();
-                Zq::from_z_modulus(&coeff_z, q)
-            })
-            .collect::<Vec<_>>();
-
-        let prime_omegas = omega_powers
-            .iter()
-            .step_by(m_prime)
-            .map(|w| w.clone())
-            .collect::<Vec<_>>();
-
-        let crt_prime = crt_prime(&prime_omegas);
-        if prime_power == 1 {
-            let coeffs_mat = MatZq::new(prime - 1, 1, q); // Theres got to be  abetter way or implment Mat * Vec multiplication
-            let res = crt_prime * coeffs_mat;
-            for i in 0..prime - 1 {
-                coeffs[i] = res.get_entry(i, 0).unwrap();
+    // _ variables because it should modify coeffs
+    let _ = coeffs // TODO: Parallelize
+        .chunks_exact_mut(prime - 1) // phi(p) = p - 1
+        .map(|coeffs_chunk| {
+            let mut coeffs_mat = MatZq::new(prime, 1, q);
+            for (i, coeff) in coeffs_chunk.iter().enumerate() {
+                coeffs_mat.set_entry(i, 0, coeff).unwrap();
             }
-            return coeffs;
-        }
-
-        stride_permutation(prime, &mut coeffs);
-
-        // _ variables because it should modify coeffs
-        let _ = coeffs // TODO: Parallelize
-            .chunks_exact_mut(prime - 1) // phi(p) = p - 1
-            .map(|coeffs_chunk| {
-                let mut coeffs_mat = MatZq::new(prime, 1, q);
-                for (i, coeff) in coeffs_chunk.iter().enumerate() {
-                    coeffs_mat.set_entry(i, 0, coeff).unwrap();
-                }
-                let res = crt_prime.clone() * coeffs_mat;
-                for i in 0..coeffs_chunk.len() {
-                    coeffs_chunk[i] = res.get_entry(i, 0).unwrap();
-                }
-            });
-
-        inverse_stride_permutation(prime, &mut coeffs);
-
-        let t_hat = twiddle_hat_factors(prime, &omega_powers);
-        for (twiddle_factor, coeff) in t_hat.iter().zip(coeffs.iter_mut()) {
-            *coeff = &*coeff * twiddle_factor;
-        }
-
-        let m_prime_omega_powers = omega_powers
-            .iter()
-            .step_by(prime)
-            .map(|w| w.clone())
-            .collect::<Vec<_>>();
-
-        let _ = coeffs.chunks_exact_mut(m_prime).map(|coeffs_chunk| {
-            radixp_ntt(prime, prime_power - 1, &m_prime_omega_powers, coeffs_chunk);
+            let res = crt_prime.clone() * coeffs_mat;
+            for i in 0..coeffs_chunk.len() {
+                coeffs_chunk[i] = res.get_entry(i, 0).unwrap();
+            }
         });
 
-        // Note that the last stride permutation is not done
-        // This might not be needed because we will perform the inverse as well
-        coeffs
+    inverse_stride_permutation(prime, coeffs);
+
+    let t_hat = twiddle_hat_factors(prime, &omega_powers);
+    for (twiddle_factor, coeff) in t_hat.iter().zip(coeffs.iter_mut()) {
+        *coeff = &*coeff * twiddle_factor;
     }
+
+    let m_prime_omega_powers = omega_powers
+        .iter()
+        .step_by(prime)
+        .map(|w| w.clone())
+        .collect::<Vec<_>>();
+
+    let _ = coeffs.chunks_exact_mut(m_prime).map(|coeffs_chunk| {
+        // TODO: Parallelize
+        radixp_ntt(prime, prime_power - 1, &m_prime_omega_powers, coeffs_chunk);
+    });
+
+    // Note that the last stride permutation is not done
+    // This might not be needed because we will perform the inverse as well
 }
 
 // Double check
