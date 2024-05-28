@@ -83,6 +83,7 @@ impl PolynomialRingZq {
 
     fn to_crt_basis(&self, prime: usize, prime_power: usize, rou: Zq) -> PolynomialRingZqCRTBasis {
         let poly = &self.poly;
+        println!("Inside to_crt_basis ROU:{}", rou);
         let q = rou.get_mod().to_string().parse::<u32>().unwrap();
         let m = prime.pow(prime_power as u32) as u32;
         let (euler_totient_m, _) = euler_totient(m as usize);
@@ -136,16 +137,21 @@ impl PolynomialRingZq {
 fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
     // Currently only using prime power decomposition, as we might noot need decomposition for all factors in NTT
     // get rou from ModulusPoly?
-    let q = rou.get_mod().to_string().parse::<u32>().unwrap();
+    let q = rou.get_mod().to_string().parse::<u64>().unwrap();
     let varphi_m = coeffs.len(); // Double check
     let m_prime = varphi_m / (prime - 1);
     println!("varphi(m) = {}", varphi_m);
     println!("m_prime = {}", m_prime);
     println!("varphi(p) = {}", prime - 1);
     let domain_size = prime.pow(prime_power as u32) as u32;
-    assert_eq!((q - 1) % domain_size, 0);
-    let resized_power = (q - 1) / domain_size;
+    assert_eq!((q - 1) % domain_size as u64, 0);
+    println!("Root of unity: {}", rou);
+    println!("q-1 = {}", q - 1);
+    println!("Domain size: {}", domain_size);
+    let resized_power = (q - 1) / domain_size as u64;
+    println!("Resize: {}", resized_power);
     let omega = rou.pow(resized_power).unwrap();
+    println!("Omega_{}: {}", domain_size, omega);
     let one = Zq::from_z_modulus(&Z::from(1), q);
     assert_eq!(
         omega.pow(domain_size).unwrap(),
@@ -175,13 +181,15 @@ fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
         println!("prime_omega^{} = {}", i, power);
     }
 
-    println!("Unchanged coeffs");
-    for c in coeffs.iter() {
-        print!("{} ", c);
-    }
-    println!("");
 
     let crt_prime = crt_prime(&prime_omegas);
+    println!("CRT_{}", prime);
+    println!("{}", crt_prime);
+    println!("Unchanged coeffs");
+    for c in coeffs.iter() {
+        print!("{}, ", c);
+    }
+    println!("");
     if prime_power == 1 {
         println!("prime power = 1");
         let coeffs_mat = MatZq::new(prime - 1, 1, q); // Theres got to be  abetter way or implment Mat * Vec multiplication
@@ -192,35 +200,37 @@ fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
         return;
     }
 
-    stride_permutation(prime - 1, coeffs);
-    println!("First stride coeffs");
-    for c in coeffs.iter() {
-        print!("{} ", c);
-    }
-    println!("");
-
-    for coeffs_chunk in coeffs.chunks_exact_mut(prime - 1) {
-        let mut coeffs_mat = MatZq::new(prime - 1, 1, q);
-        for (i, coeff) in coeffs_chunk.iter().enumerate() {
-            coeffs_mat.set_entry(i, 0, coeff).unwrap();
+    if prime != 2 {
+        stride_permutation(prime - 1, coeffs);
+        println!("First stride coeffs");
+        for c in coeffs.iter() {
+            print!("{}, ", c);
         }
-        let res = crt_prime.clone() * coeffs_mat;
-        for i in 0..coeffs_chunk.len() {
-            coeffs_chunk[i] = res.get_entry(i, 0).unwrap();
-        }
-    }
-    println!("CRT_p x I coeffs");
-    for c in coeffs.iter() {
-        print!("{} ", c);
-    }
-    println!("");
+        println!("");
 
-    inverse_stride_permutation(prime - 1, coeffs);
-    println!("Second stride coeffs");
-    for c in coeffs.iter() {
-        print!("{}, ", c);
+        for coeffs_chunk in coeffs.chunks_exact_mut(prime - 1) {
+            let mut coeffs_mat = MatZq::new(prime - 1, 1, q);
+            for (i, coeff) in coeffs_chunk.iter().enumerate() {
+                coeffs_mat.set_entry(i, 0, coeff).unwrap();
+            }
+            let res = crt_prime.clone() * coeffs_mat;
+            for i in 0..coeffs_chunk.len() {
+                coeffs_chunk[i] = res.get_entry(i, 0).unwrap();
+            }
+        }
+        println!("CRT_p x I coeffs");
+        for c in coeffs.iter() {
+            print!("{} ", c);
+        }
+        println!("");
+
+        inverse_stride_permutation(prime - 1, coeffs);
+        println!("Second stride coeffs");
+        for c in coeffs.iter() {
+            print!("{}, ", c);
+        }
+        println!("");
     }
-    println!("");
 
     let t_hat = twiddle_hat_factors(prime, &omega_powers);
     println!("T_hat");
@@ -325,8 +335,9 @@ fn gcd(a: usize, b: usize) -> usize {
 
 /// Note that this stride permutation will only be used for CRT and not DFT
 /// so we use varphi instead or prime
-fn stride_permutation(varphi_p: usize, input: &mut [Zq]) {
+fn inverse_stride_permutation(varphi_p: usize, input: &mut [Zq]) {
     let varphi_m = input.len();
+    println!("varphi_m inside stride: {}", varphi_m);
     assert_eq!(varphi_m % varphi_p, 0);
     let d = varphi_m / varphi_p;
 
@@ -343,7 +354,7 @@ fn stride_permutation(varphi_p: usize, input: &mut [Zq]) {
     input.clone_from_slice(&temp);
 }
 
-fn inverse_stride_permutation(varphi_p: usize, input: &mut [Zq]) {
+fn stride_permutation(varphi_p: usize, input: &mut [Zq]) {
     let varphi_m = input.len();
     assert_eq!(varphi_m % varphi_p, 0);
 
@@ -646,17 +657,20 @@ mod tests {
         }
     }
 
+    #[test]
     fn crt_po3_test() {
-        let q = 15 * (1 << 27) + 1;  // Change field for a high 3-adicity field
-        let rou = Zq::from((76160998, q as u64)); // Change Root of unity as well
-        let prime = 2;
-        let prime_power = 4;
+        let q = (1 << 31) - 1; // Change field for a high 3-adicity field
+        let rou = Zq::from((7, q as u64)); // Change Root of unity as well
+        let prime = 3;
+        let prime_power = 2;
         let mut m = 1;
         for _ in 0..prime_power {
             m = m * prime;
         }
         let mod_poly_desc = modulus_poly_description(prime, prime_power, q);
         let modulus_poly = ModulusPolynomialRingZq::from_str(&mod_poly_desc).unwrap();
+        // let poly_z = PolyOverZ::from_str("6  1 2 3 4 5 6 7 8 9").unwrap();
+        // let poly = PolynomialRingZq::from((&poly_z, &modulus_poly));
         let poly = PolynomialRingZq::sample_uniform(modulus_poly.clone());
         let coeffs = (0..poly.get_degree() + 1)
             .map(|i| {
@@ -667,6 +681,7 @@ mod tests {
 
         let rou_eight = rou.pow(((q - 1) / m) as u32).unwrap();
         let (_, relative_primes) = euler_totient(prime.pow(prime_power as u32));
+        println!("Relative primes of {}: {:?}", m, relative_primes);
         let crt_coeffs_naive = relative_primes
             .iter()
             .map(|r| {
