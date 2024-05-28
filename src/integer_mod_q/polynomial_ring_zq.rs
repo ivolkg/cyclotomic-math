@@ -137,18 +137,10 @@ fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
     let q = rou.get_mod().to_string().parse::<u64>().unwrap();
     let varphi_m = coeffs.len(); // Double check
     let m_prime = varphi_m / (prime - 1);
-    println!("varphi(m) = {}", varphi_m);
-    println!("m_prime = {}", m_prime);
-    println!("varphi(p) = {}", prime - 1);
     let domain_size = prime.pow(prime_power as u32) as u32;
     assert_eq!((q - 1) % domain_size as u64, 0);
-    println!("Root of unity: {}", rou);
-    println!("q-1 = {}", q - 1);
-    println!("Domain size: {}", domain_size);
     let resize_power = (q - 1) / domain_size as u64;
-    println!("Resize: {}", resize_power);
     let omega = rou.pow(resize_power).unwrap();
-    println!("Omega_{}: {}", domain_size, omega);
     let one = Zq::from_z_modulus(&Z::from(1), q);
     assert_eq!(
         omega.pow(domain_size).unwrap(),
@@ -162,32 +154,14 @@ fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
         omega_powers.push(current_omega_power.clone());
         current_omega_power = &current_omega_power * &omega;
     }
-    println!("Omegas");
-    for o in omega_powers.iter() {
-        print!("{}, ", o);
-    }
-    println!("");
     let prime_omegas = omega_powers
         .iter()
         .step_by(m_prime)
         .map(|w| w.clone())
         .collect::<Vec<_>>();
 
-    println!("Omegas for prime");
-    for (i, power) in prime_omegas.iter().enumerate() {
-        println!("prime_omega^{} = {}", i, power);
-    }
-
     let crt_prime = crt_prime(&prime_omegas);
-    println!("CRT_{}", prime);
-    println!("{}", crt_prime);
-    println!("Unchanged coeffs");
-    for c in coeffs.iter() {
-        print!("{}, ", c);
-    }
-    println!("");
     if prime_power == 1 {
-        println!("prime power = 1");
         let coeffs_mat = MatZq::new(prime - 1, 1, q); // Theres got to be  abetter way or implment Mat * Vec multiplication
         let res = crt_prime * coeffs_mat;
         for i in 0..prime - 1 {
@@ -198,11 +172,6 @@ fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
 
     if prime != 2 {
         stride_permutation(prime - 1, coeffs);
-        println!("First stride coeffs");
-        for c in coeffs.iter() {
-            print!("{}, ", c);
-        }
-        println!("");
 
         for coeffs_chunk in coeffs.chunks_exact_mut(prime - 1) {
             let mut coeffs_mat = MatZq::new(prime - 1, 1, q);
@@ -214,35 +183,15 @@ fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
                 coeffs_chunk[i] = res.get_entry(i, 0).unwrap();
             }
         }
-        println!("CRT_p x I coeffs");
-        for c in coeffs.iter() {
-            print!("{} ", c);
-        }
-        println!("");
 
         inverse_stride_permutation(prime - 1, coeffs);
-        println!("Second stride coeffs");
-        for c in coeffs.iter() {
-            print!("{}, ", c);
-        }
-        println!("");
     }
 
     let t_hat = twiddle_hat_factors(prime, &omega_powers);
-    println!("T_hat");
-    for t in t_hat.iter() {
-        print!("{}, ", t);
-    }
-    println!("");
 
     for (twiddle_factor, coeff) in t_hat.iter().zip(coeffs.iter_mut()) {
         *coeff = &*coeff * twiddle_factor;
     }
-    println!("After That coeffs");
-    for c in coeffs.iter() {
-        print!("{}, ", c);
-    }
-    println!("");
 
     let m_prime_omega_powers = omega_powers
         .iter()
@@ -250,26 +199,12 @@ fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
         .map(|w| w.clone())
         .collect::<Vec<_>>();
 
-    println!("Coeffs len = {}", coeffs.len());
-    for (i, coeffs_chunk) in coeffs.chunks_exact_mut(m_prime).enumerate() {
-        println!("I x DFT_mprime chunk:{}", i);
+    for coeffs_chunk in coeffs.chunks_exact_mut(m_prime) {
         radixp_ntt(prime, prime_power - 1, &m_prime_omega_powers, coeffs_chunk);
     }
-    println!("After DFT_m_prime coeffs");
-    for c in coeffs.iter() {
-        print!("{}, ", c);
-    }
-    println!("");
 
     assert_eq!(coeffs.len(), varphi_m);
     stride_permutation(prime - 1, coeffs);
-    println!("Third stride coeffs");
-    for c in coeffs.iter() {
-        print!("{}, ", c);
-    }
-    println!("");
-    // Note that the last stride permutation is not done
-    // This might not be needed because we will perform the inverse as well
 }
 
 // Double check
@@ -455,7 +390,7 @@ impl PolynomialRingZqCRTBasis {
         modulus: &ModulusPolynomialRingZq,
     ) -> PolynomialRingZq {
         let mut coeffs = self.coeffs.clone();
-        icrt_radixp(&mut coeffs, prime, prime_power, rou);
+        icrt(&mut coeffs, prime, prime_power, rou);
         PolynomialRingZq::from_vec(coeffs, modulus)
     }
 }
@@ -474,17 +409,18 @@ impl Mul for PolynomialRingZqCRTBasis {
     }
 }
 
-fn icrt_radixp(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
-    let q = rou.get_mod().to_string().parse::<u32>().unwrap();
+fn icrt(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
+    // Currently only using prime power decomposition, as we might noot need decomposition for all factors in NTT
+    let q = rou.get_mod().to_string().parse::<u64>().unwrap();
     let varphi_m = crt_coeffs.len(); // Double check
     let m_prime = varphi_m / (prime - 1);
     let domain_size = prime.pow(prime_power as u32) as u32;
-    assert_eq!((q - 1) % domain_size, 0);
-    let resize_power = (q - 1) / domain_size;
+    assert_eq!((q - 1) % domain_size as u64, 0);
+    let resize_power = (q - 1) / domain_size as u64;
     let omega = rou.pow(resize_power).unwrap();
     let one = Zq::from_z_modulus(&Z::from(1), q);
     assert_eq!(
-        omega.pow(resize_power).unwrap(),
+        omega.pow(domain_size).unwrap(),
         one,
         "{}-th root of unity not correct",
         domain_size
@@ -495,12 +431,6 @@ fn icrt_radixp(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq)
         omega_powers.push(current_omega_power.clone());
         current_omega_power = &current_omega_power * &omega;
     }
-    println!("Omegas");
-    for (i, power) in omega_powers.iter().enumerate() {
-        println!("omega^{} = {}", i, power);
-    }
-
-    // Define crt_prime here to handle the prime case fast
     let prime_omegas = omega_powers
         .iter()
         .step_by(m_prime)
@@ -529,6 +459,9 @@ fn icrt_radixp(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq)
     m_prime_omega_powers.reverse();
     m_prime_omega_powers.rotate_right(1);
 
+    let nq_inv = Zq::from_z_modulus(&Z::from(m_prime_omega_powers.len() as u32), q)
+        .inverse()
+        .unwrap();
     for crt_coeffs_chunk in crt_coeffs.chunks_exact_mut(m_prime) {
         radixp_ntt(
             prime,
@@ -536,9 +469,6 @@ fn icrt_radixp(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq)
             &m_prime_omega_powers,
             crt_coeffs_chunk,
         );
-        let nq_inv = Zq::from_z_modulus(&Z::from(m_prime_omega_powers.len() as u32), q)
-            .inverse()
-            .unwrap();
         for coeff in crt_coeffs_chunk {
             *coeff = &*coeff * nq_inv.clone();
         }
@@ -552,8 +482,8 @@ fn icrt_radixp(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq)
     if prime != 2 {
         stride_permutation(prime - 1, crt_coeffs);
 
-        for crt_coeffs_chunk in crt_coeffs.chunks_exact_mut(prime-1) {
-            let mut coeffs_mat = MatZq::new(prime, 1, q);
+        for crt_coeffs_chunk in crt_coeffs.chunks_exact_mut(prime - 1) {
+            let mut coeffs_mat = MatZq::new(prime - 1, 1, q);
             for (i, coeff) in crt_coeffs_chunk.iter().enumerate() {
                 coeffs_mat.set_entry(i, 0, coeff).unwrap();
             }
@@ -662,16 +592,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let rou_eight = rou.pow(((q - 1) / m) as u32).unwrap();
+        let new_rou = rou.pow(((q - 1) / m) as u32).unwrap();
         let (_, relative_primes) = euler_totient(prime.pow(prime_power as u32));
-        println!("Relative primes of {}: {:?}", m, relative_primes);
         let crt_coeffs_naive = relative_primes
             .iter()
             .map(|r| {
                 let crt_coeff: Zq = coeffs.iter().enumerate().skip(1).fold(
                     coeffs.first().unwrap().clone(),
                     |acc, (i, c)| {
-                        let x = c * &rou_eight.pow((r * i) as u32).unwrap();
+                        let x = c * &new_rou.pow((r * i) as u32).unwrap();
                         let acc = &x + acc;
                         acc
                     },
@@ -700,24 +629,10 @@ mod tests {
         let modulus_poly = ModulusPolynomialRingZq::from_str(&mod_poly_desc).unwrap();
         let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
         let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
-        println!("Poly 1: {}", poly_1.get_poly());
-        println!("Poly 2: {}", poly_2.get_poly());
 
         let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, rou.clone());
-        let coeffs_1 = poly_1_crt.coeffs.clone();
-        println!("PolyCRT 1:");
-        for coeff in coeffs_1 {
-            print!("{} ", coeff.get_value());
-        }
-        println!("");
 
         let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
-        println!("PolyCRT 2:");
-        let coeffs_2 = poly_2_crt.coeffs.clone();
-        for coeff in coeffs_2 {
-            print!("{} ", coeff.get_value());
-        }
-        println!("");
 
         let result_crt_poly = poly_1_crt * poly_2_crt;
         let result_poly = result_crt_poly.to_powerful_basis(prime, prime_power, rou, &modulus_poly);
@@ -726,7 +641,7 @@ mod tests {
     }
     #[test]
     fn crt_mul_po3_test() {
-        let q = (1 << 31) -1;
+        let q = (1 << 31) - 1;
         let rou = Zq::from((7, q as u64)); // Change the root of unity
         let prime = 3;
         let prime_power = 2;
@@ -734,24 +649,10 @@ mod tests {
         let modulus_poly = ModulusPolynomialRingZq::from_str(&mod_poly_desc).unwrap();
         let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
         let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
-        println!("Poly 1: {}", poly_1.get_poly());
-        println!("Poly 2: {}", poly_2.get_poly());
 
         let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, rou.clone());
-        let coeffs_1 = poly_1_crt.coeffs.clone();
-        println!("PolyCRT 1:");
-        for coeff in coeffs_1 {
-            print!("{} ", coeff.get_value());
-        }
-        println!("");
 
         let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
-        println!("PolyCRT 2:");
-        let coeffs_2 = poly_2_crt.coeffs.clone();
-        for coeff in coeffs_2 {
-            print!("{} ", coeff.get_value());
-        }
-        println!("");
 
         let result_crt_poly = poly_1_crt * poly_2_crt;
         let result_poly = result_crt_poly.to_powerful_basis(prime, prime_power, rou, &modulus_poly);
