@@ -16,7 +16,7 @@
 //! Therefore, the DEVELOPER has to call the [`PolynomialRingZq::reduce`], whenever
 //! a computation may exceed the modulus, because it is not reduced automatically
 
-use std::{ops::Mul, str::FromStr, time::Instant};
+use std::{ops::Mul, str::FromStr};
 
 use super::{MatZq, ModulusPolynomialRingZq, Zq};
 use crate::{
@@ -80,12 +80,16 @@ impl PolynomialRingZq {
         PolynomialRingZqNTTBasis { evals }
     }
 
-    pub fn to_crt_basis(&self, prime: usize, prime_power: usize, rou: Zq) -> PolynomialRingZqCRTBasis {
+    pub fn to_crt_basis(
+        &self,
+        prime: usize,
+        prime_power: usize,
+        rou: Zq,
+    ) -> PolynomialRingZqCRTBasis {
         // Pass rou for m and not the general rou
         let poly = &self.poly;
         let q = rou.get_mod().to_string().parse::<u32>().unwrap();
-        let m = prime.pow(prime_power as u32) as u32;
-        let (euler_totient_m, _) = euler_totient(m as usize);
+        let euler_totient_m = euler_totient(prime, prime_power).count();
 
         let mut coeffs = (0..euler_totient_m) // Unclear if the coeficients are order from the least power to the greater, probably is
             .map(|i| {
@@ -105,7 +109,7 @@ impl PolynomialRingZq {
         let omega = rou.pow(resized_power).unwrap();
         let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
         let mut omega_powers = Vec::new();
-        for i in 0..prime.pow(prime_power as u32) {
+        for _ in 0..prime.pow(prime_power as u32) {
             omega_powers.push(current_omega_power.clone());
             current_omega_power = &current_omega_power * &omega;
         }
@@ -210,10 +214,7 @@ fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
 
 // Double check
 fn twiddle_hat_factors(prime: usize, omega_powers: &[Zq]) -> Vec<Zq> {
-    let euler_totient_p = prime - 1;
-    let (euler_totient_m, m_relative_primes) = euler_totient(omega_powers.len());
-    let m_prime = euler_totient_m / euler_totient_p;
-    let q = omega_powers.first().unwrap().get_mod();
+    let m_prime = omega_powers.len() / prime;
     let mut t_hat = Vec::new();
     for r in 1..prime {
         for j in 0..m_prime {
@@ -224,16 +225,18 @@ fn twiddle_hat_factors(prime: usize, omega_powers: &[Zq]) -> Vec<Zq> {
 }
 
 fn crt_prime(prime_omegas: &[Zq]) -> MatZq {
-    let (euler_totient_m, prime_relatives) = euler_totient(prime_omegas.len());
+    let prime = prime_omegas.len();
+    let euler_totient_p = prime - 1;
+    let prime_relatives = 1..prime;
     assert_eq!(
         prime_omegas.len() - 1,
-        euler_totient_m,
+        euler_totient_p,
         "lenght is not a prime"
     );
     let q = prime_omegas.first().unwrap().get_mod();
-    let mut crt = MatZq::new(euler_totient_m, euler_totient_m, q);
-    for (i, rel) in prime_relatives.iter().enumerate() {
-        for j in 0..euler_totient_m {
+    let mut crt = MatZq::new(euler_totient_p, euler_totient_p, q);
+    for (i, rel) in prime_relatives.enumerate() {
+        for j in 0..euler_totient_p {
             crt.set_entry(i, j, prime_omegas[(rel * j) % prime_omegas.len()].clone())
                 .unwrap();
         }
@@ -245,18 +248,23 @@ fn inverse_crt_prime(prime_omegas: &[Zq]) -> MatZq {
     crt_prime(prime_omegas).inverse().unwrap()
 }
 
-fn euler_totient(m: usize) -> (usize, Vec<usize>) {
-    let relative_primes: Vec<_> = (1..m).filter(|&x| gcd(x, m) == 1).collect();
-    (relative_primes.len(), relative_primes)
+fn euler_totient(prime: usize, prime_power: usize) -> impl Iterator<Item = usize> {
+    let m_prime = prime.pow(prime_power as u32-1);
+    let relative_set = (1..prime)
+        .chain(
+            (1..(m_prime)).flat_map(move |i| i * prime + 1..prime*(i + 1))
+        );
+    relative_set
 }
 
-fn gcd(a: usize, b: usize) -> usize {
-    if b == 0 {
-        a
-    } else {
-        gcd(b, a % b)
-    }
-}
+// Not necesary for m a prime power
+// fn gcd(a: usize, b: usize) -> usize {
+//     if b == 0 {
+//         a
+//     } else {
+//         gcd(b, a % b)
+//     }
+// }
 
 /// Note that this stride permutation will only be used for CRT and not DFT
 /// so we use varphi instead or prime
@@ -297,15 +305,13 @@ fn stride_permutation(varphi_p: usize, input: &mut [Zq]) {
 
 fn radixp_ntt(prime: usize, prime_power: usize, omega_powers: &[Zq], coeffs: &mut [Zq]) {
     let n = coeffs.len();
-    assert_eq!(prime.pow(prime_power as u32), n);
-    let q = omega_powers.first().unwrap().get_mod();
     if n == 1 {
         return;
     }
+    assert_eq!(prime.pow(prime_power as u32), n);
+    let q = omega_powers.first().unwrap().get_mod();
     let zero = Zq::from_z_modulus(&Z::from(0), q);
-    let mut decomposed_coeffs = (0..prime)
-        .map(|_| vec![zero.clone(); n / prime])
-        .collect::<Vec<_>>();
+    let mut decomposed_coeffs = vec![vec![zero.clone(); n/prime]; prime];
 
     for i in 0..n / prime {
         for j in 0..decomposed_coeffs.len() {
@@ -353,7 +359,7 @@ impl PolynomialRingZqNTTBasis {
         let omega = rou.pow(resized_power).unwrap();
         let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
         let mut omega_powers = Vec::new();
-        for i in 0..prime.pow(prime_power as u32) {
+        for _ in 0..prime.pow(prime_power as u32) {
             omega_powers.push(current_omega_power.clone());
             current_omega_power = &current_omega_power * &omega;
         }
@@ -496,6 +502,7 @@ fn icrt(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
         inverse_stride_permutation(prime - 1, crt_coeffs);
     }
 }
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -528,7 +535,7 @@ mod tests {
         let q = 15 * (1 << 27) + 1;
         let rou = Zq::from((76160998, q as u64));
         let prime = 2;
-        let prime_power = 4;
+        let prime_power = 10;
         let mut m = 1;
         for _ in 0..prime_power {
             m = m * prime;
@@ -544,9 +551,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         let new_rou = rou.pow(((q - 1) / m) as u32).unwrap();
-        let (_, relative_primes) = euler_totient(prime.pow(prime_power as u32));
+        let relative_primes = euler_totient(prime, prime_power);
         let crt_coeffs_naive = relative_primes
-            .iter()
             .map(|r| {
                 let crt_coeff: Zq = coeffs.iter().enumerate().skip(1).fold(
                     coeffs.first().unwrap().clone(),
@@ -593,9 +599,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         let new_rou = rou.pow(((q - 1) / m) as u32).unwrap();
-        let (_, relative_primes) = euler_totient(prime.pow(prime_power as u32));
+        let relative_primes = euler_totient(prime, prime_power);
         let crt_coeffs_naive = relative_primes
-            .iter()
             .map(|r| {
                 let crt_coeff: Zq = coeffs.iter().enumerate().skip(1).fold(
                     coeffs.first().unwrap().clone(),

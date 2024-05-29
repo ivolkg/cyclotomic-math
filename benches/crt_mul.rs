@@ -4,36 +4,43 @@ use qfall_math::integer_mod_q::PolynomialRingZq;
 use qfall_math::integer_mod_q::Zq;
 use std::str::FromStr;
 
+// // Mersenne31
+// const Q: usize = (1 << 31) - 1;
+// const ROU: usize = 7;
+// const PRIME: usize = 3;
+// const PPOWER: usize = 2;
+
+// BabyBear
+const Q: usize = 15 * (1 << 27) + 1;
+const ROU: usize = 76160998;
+const PRIME: usize = 2;
+const PPOWER: usize = 8;
 pub fn bench_crt_mul(c: &mut Criterion) {
-    let q = 15 * (1 << 27) + 1;
-    let rou = Zq::from((761609910, q as u64)); // Change the root of unity
-    let prime = 2;
-    let prime_power = 10;
-    let mod_poly_desc = modulus_poly_description(prime, prime_power, q);
+    let rou = Zq::from((ROU as u32, Q as u64)); // Change the root of unity
+    let mod_poly_desc = modulus_poly_description(PRIME, PPOWER, Q);
     let modulus_poly = ModulusPolynomialRingZq::from_str(&mod_poly_desc).unwrap();
     let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
     let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
-    c.bench_function("CRT multiplication of 2^10-th cyclotomics", |b|{
+    let desc = format!("CRT multiplication of {}^{}-th cyclotomics", PRIME, PPOWER);
+    c.bench_function(desc.as_str(), |b|{
         b.iter(||{
-            let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, rou.clone());
+            let poly_1_crt = poly_1.to_crt_basis(PRIME, PPOWER, rou.clone());
 
-            let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
+            let poly_2_crt = poly_2.to_crt_basis(PRIME, PPOWER, rou.clone());
 
             let result_crt_poly = poly_1_crt * poly_2_crt;
-            result_crt_poly.to_powerful_basis(prime, prime_power, rou.clone(), &modulus_poly);
+            result_crt_poly.to_powerful_basis(PRIME, PPOWER, rou.clone(), &modulus_poly);
         })
     });
 
 }
 pub fn bench_naive_mul(c: &mut Criterion) {
-    let q = 15 * (1 << 27) + 1;
-    let prime = 2;
-    let prime_power = 10;
-    let mod_poly_desc = modulus_poly_description(prime, prime_power, q);
+    let mod_poly_desc = modulus_poly_description(PRIME, PPOWER, Q);
     let modulus_poly = ModulusPolynomialRingZq::from_str(&mod_poly_desc).unwrap();
     let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
     let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
-    c.bench_function("KS multiplication of 2^10-th cyclotomics", |b|{
+    let desc = format!("KS multiplication of {}^{}-th cyclotomics", PRIME, PPOWER);
+    c.bench_function(desc.as_str(), |b|{
         b.iter(||{
             &poly_1 * &poly_2
         })
