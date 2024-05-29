@@ -14,5 +14,7 @@ pub mod classic_crypto;
 pub mod integer;
 pub mod sampling;
 pub mod solve;
+pub mod crt_mul;
 
-criterion_main! {integer::benches, classic_crypto::benches, sampling::benches, solve::benches}
+// criterion_main! {integer::benches, classic_crypto::benches, sampling::benches, solve::benches}
+criterion_main!(crt_mul::benches);
