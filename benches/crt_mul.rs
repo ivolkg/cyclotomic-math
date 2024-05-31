@@ -22,17 +22,19 @@ pub fn bench_crt_mul(c: &mut Criterion) {
     let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
     let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
     let desc = format!("CRT multiplication of {}^{}-th cyclotomics", PRIME, PPOWER);
-    c.bench_function(desc.as_str(), |b|{
-        b.iter(||{
+    c.bench_function(desc.as_str(), |b| {
+        b.iter(|| {
             let poly_1_crt = poly_1.to_crt_basis(PRIME, PPOWER, rou.clone());
 
             let poly_2_crt = poly_2.to_crt_basis(PRIME, PPOWER, rou.clone());
 
-            let result_crt_poly = poly_1_crt * poly_2_crt;
+            let result_crt_poly = poly_1_crt.clone() * poly_2_crt.clone();
+            for _ in 0..99 {
+                let result_crt_poly = poly_1_crt.clone() * poly_2_crt.clone();
+            }
             result_crt_poly.to_powerful_basis(PRIME, PPOWER, rou.clone(), &modulus_poly);
         })
     });
-
 }
 pub fn bench_naive_mul(c: &mut Criterion) {
     let mod_poly_desc = modulus_poly_description(PRIME, PPOWER, Q);
@@ -40,12 +42,13 @@ pub fn bench_naive_mul(c: &mut Criterion) {
     let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
     let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
     let desc = format!("KS multiplication of {}^{}-th cyclotomics", PRIME, PPOWER);
-    c.bench_function(desc.as_str(), |b|{
-        b.iter(||{
-            &poly_1 * &poly_2
+    c.bench_function(desc.as_str(), |b| {
+        b.iter(|| {
+            for _ in 0..100 {
+                &poly_1 * &poly_2;
+            }
         })
     });
-
 }
 
 fn modulus_poly_description(prime: usize, prime_power: usize, q: usize) -> String {

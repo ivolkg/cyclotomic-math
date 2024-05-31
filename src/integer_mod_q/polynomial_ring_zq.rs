@@ -381,11 +381,10 @@ impl PolynomialRingZqNTTBasis {
     }
 }
 
+#[derive(Clone)]
 pub struct PolynomialRingZqCRTBasis {
     pub(crate) coeffs: Vec<Zq>,
 }
-
-impl PolynomialRingZqCRTBasis {}
 
 impl PolynomialRingZqCRTBasis {
     pub fn to_powerful_basis(
