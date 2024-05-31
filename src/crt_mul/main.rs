@@ -22,7 +22,7 @@ fn crt_mul() {
 
     let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
 
-    let result_crt_poly = poly_1_crt * poly_2_crt;
+    let result_crt_poly = &poly_1_crt * &poly_2_crt;
     let _ = result_crt_poly.to_powerful_basis(prime, prime_power, rou.clone(), &modulus_poly);
 }
 

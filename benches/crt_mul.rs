@@ -28,9 +28,9 @@ pub fn bench_crt_mul(c: &mut Criterion) {
 
             let poly_2_crt = poly_2.to_crt_basis(PRIME, PPOWER, rou.clone());
 
-            let result_crt_poly = poly_1_crt.clone() * poly_2_crt.clone();
+            let result_crt_poly = &poly_1_crt * &poly_2_crt;
             for _ in 0..99 {
-                let result_crt_poly = poly_1_crt.clone() * poly_2_crt.clone();
+                let result_crt_poly = &poly_1_crt * &poly_2_crt;
             }
             result_crt_poly.to_powerful_basis(PRIME, PPOWER, rou.clone(), &modulus_poly);
         })

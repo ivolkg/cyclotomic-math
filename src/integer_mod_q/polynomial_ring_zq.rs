@@ -399,11 +399,11 @@ impl PolynomialRingZqCRTBasis {
         PolynomialRingZq::from_vec(coeffs, modulus)
     }
 }
-impl Add for PolynomialRingZqCRTBasis {
-    type Output = Self;
+impl Add for &PolynomialRingZqCRTBasis {
+    type Output = PolynomialRingZqCRTBasis;
     fn add(self, rhs: Self) -> Self::Output {
-        let coeffs_1 = self.coeffs;
-        let coeffs_2 = rhs.coeffs;
+        let coeffs_1 = &self.coeffs;
+        let coeffs_2 = &rhs.coeffs;
         let res_coeffs = coeffs_1
             .iter()
             .zip(coeffs_2.iter())
@@ -413,11 +413,11 @@ impl Add for PolynomialRingZqCRTBasis {
     }
 }
 
-impl Mul for PolynomialRingZqCRTBasis {
-    type Output = Self;
+impl Mul for &PolynomialRingZqCRTBasis {
+    type Output = PolynomialRingZqCRTBasis;
     fn mul(self, rhs: Self) -> Self::Output {
-        let coeffs_1 = self.coeffs;
-        let coeffs_2 = rhs.coeffs;
+        let coeffs_1 = &self.coeffs;
+        let coeffs_2 = &rhs.coeffs;
         let res_coeffs = coeffs_1
             .iter()
             .zip(coeffs_2.iter())
@@ -652,7 +652,7 @@ mod tests {
 
             let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
 
-            let result_crt_poly = poly_1_crt * poly_2_crt;
+            let result_crt_poly = &poly_1_crt * &poly_2_crt;
             let result_poly =
                 result_crt_poly.to_powerful_basis(prime, prime_power, rou, &modulus_poly);
 
@@ -679,7 +679,7 @@ mod tests {
 
         let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
 
-        let result_crt_poly = poly_1_crt * poly_2_crt;
+        let result_crt_poly = &poly_1_crt * &poly_2_crt;
         let result_poly = result_crt_poly.to_powerful_basis(prime, prime_power, rou, &modulus_poly);
 
         assert_eq!(result_poly, poly_1 * poly_2, "CRT multiplication failed");
