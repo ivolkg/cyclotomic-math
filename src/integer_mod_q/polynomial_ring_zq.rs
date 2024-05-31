@@ -16,7 +16,7 @@
 //! Therefore, the DEVELOPER has to call the [`PolynomialRingZq::reduce`], whenever
 //! a computation may exceed the modulus, because it is not reduced automatically
 
-use std::{ops::Mul, str::FromStr};
+use std::{ops::{Mul, Add}, str::FromStr};
 
 use super::{MatZq, ModulusPolynomialRingZq, Zq};
 use crate::{
@@ -397,6 +397,19 @@ impl PolynomialRingZqCRTBasis {
         let mut coeffs = self.coeffs.clone();
         icrt(&mut coeffs, prime, prime_power, rou);
         PolynomialRingZq::from_vec(coeffs, modulus)
+    }
+}
+impl Add for PolynomialRingZqCRTBasis {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self::Output {
+        let coeffs_1 = self.coeffs;
+        let coeffs_2 = rhs.coeffs;
+        let res_coeffs = coeffs_1
+            .iter()
+            .zip(coeffs_2.iter())
+            .map(|(c1, c2)| c1 + c2)
+            .collect::<Vec<_>>();
+        PolynomialRingZqCRTBasis { coeffs: res_coeffs }
     }
 }
 
