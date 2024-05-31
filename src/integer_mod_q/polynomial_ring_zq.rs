@@ -70,8 +70,8 @@ mod set;
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Display, Clone)]
 #[display(fmt = "{poly} / {modulus}")]
 pub struct PolynomialRingZq {
-    pub(crate) poly: PolyOverZ,
-    pub(crate) modulus: ModulusPolynomialRingZq,
+    pub poly: PolyOverZ,
+    pub modulus: ModulusPolynomialRingZq,
 }
 
 impl PolynomialRingZq {
@@ -348,7 +348,7 @@ fn radixp_ntt(prime: usize, prime_power: usize, omega_powers: &[Zq], coeffs: &mu
 }
 
 pub struct PolynomialRingZqNTTBasis {
-    pub(crate) evals: Vec<Zq>,
+    pub evals: Vec<Zq>,
 }
 
 impl PolynomialRingZqNTTBasis {
@@ -383,7 +383,7 @@ impl PolynomialRingZqNTTBasis {
 
 #[derive(Clone)]
 pub struct PolynomialRingZqCRTBasis {
-    pub(crate) coeffs: Vec<Zq>,
+    pub coeffs: Vec<Zq>,
 }
 
 impl PolynomialRingZqCRTBasis {
