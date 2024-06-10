@@ -29,9 +29,7 @@ pub fn bench_crt_mul(c: &mut Criterion) {
             let poly_2_crt = poly_2.to_crt_basis(PRIME, PPOWER, rou.clone());
 
             let result_crt_poly = &poly_1_crt * &poly_2_crt;
-            for _ in 0..99 {
                 let result_crt_poly = &poly_1_crt * &poly_2_crt;
-            }
             result_crt_poly.to_powerful_basis(PRIME, PPOWER, rou.clone(), &modulus_poly);
         })
     });
@@ -44,9 +42,7 @@ pub fn bench_naive_mul(c: &mut Criterion) {
     let desc = format!("KS multiplication of {}^{}-th cyclotomics", PRIME, PPOWER);
     c.bench_function(desc.as_str(), |b| {
         b.iter(|| {
-            for _ in 0..100 {
                 &poly_1 * &poly_2;
-            }
         })
     });
 }

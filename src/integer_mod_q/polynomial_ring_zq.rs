@@ -16,7 +16,10 @@
 //! Therefore, the DEVELOPER has to call the [`PolynomialRingZq::reduce`], whenever
 //! a computation may exceed the modulus, because it is not reduced automatically
 
-use std::{ops::{Mul, Add}, str::FromStr};
+use std::{
+    ops::{Add, Mul},
+    str::FromStr,
+};
 
 use super::{MatZq, ModulusPolynomialRingZq, Zq};
 use crate::{
@@ -74,9 +77,41 @@ pub struct PolynomialRingZq {
     pub modulus: ModulusPolynomialRingZq,
 }
 
+pub struct Domain {
+    pub omega_powers: Vec<Zq>,
+}
+
+impl Domain {
+    pub fn new(prime: usize, prime_power: usize, rou: &Zq) -> Self {
+        let q = rou.get_mod().to_string().parse::<u32>().unwrap();
+        let domain_size = prime.pow(prime_power as u32) as u32;
+        assert_eq!((q - 1) % domain_size, 0, "Field doesn't support domain");
+        let resized_power = (q - 1) / domain_size;
+        let omega = rou.pow(resized_power).unwrap();
+        assert_eq!(
+            omega.pow(domain_size).unwrap(),
+            Zq::from_z_modulus(&Z::from(1), q),
+            "ROU^N != 1",
+        );
+        let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
+        let mut omega_powers = Vec::new();
+        for _ in 0..prime.pow(prime_power as u32) {
+            omega_powers.push(current_omega_power.clone());
+            current_omega_power = &current_omega_power * &omega;
+        }
+
+        Domain { omega_powers }
+    }
+}
+
 impl PolynomialRingZq {
-    pub fn evaluate(&self, prime: usize, prime_power: usize, rou: Zq) -> PolynomialRingZqNTTBasis {
-        let evals = self.ntt(prime, prime_power, rou);
+    pub fn evaluate(
+        &self,
+        prime: usize,
+        prime_power: usize,
+        domain: &Domain,
+    ) -> PolynomialRingZqNTTBasis {
+        let evals = self.ntt(prime, prime_power, domain);
         PolynomialRingZqNTTBasis { evals }
     }
 
@@ -84,10 +119,11 @@ impl PolynomialRingZq {
         &self,
         prime: usize,
         prime_power: usize,
-        rou: Zq,
+        domain: &Domain,
     ) -> PolynomialRingZqCRTBasis {
         // Pass rou for m and not the general rou
         let poly = &self.poly;
+        let rou = &domain.omega_powers[1];
         let q = rou.get_mod().to_string().parse::<u32>().unwrap();
         let euler_totient_m = euler_totient(prime, prime_power).count();
 
@@ -97,22 +133,13 @@ impl PolynomialRingZq {
                 Zq::from_z_modulus(&coeff_z, q)
             })
             .collect::<Vec<_>>();
-        crt(&mut coeffs, prime, prime_power, rou);
+        crt(&mut coeffs, prime, prime_power, domain);
         PolynomialRingZqCRTBasis { coeffs }
     }
-    pub fn ntt(&self, prime: usize, prime_power: usize, rou: Zq) -> Vec<Zq> {
-        // Currently only using prime power decomposition, as we might not need decomposition for all factors in NTT
-        // get rou from ModulusPoly?
+    pub fn ntt(&self, prime: usize, prime_power: usize, domain: &Domain) -> Vec<Zq> {
+        let rou = &domain.omega_powers[1];
         let q = rou.get_mod().to_string().parse::<u32>().unwrap();
         let domain_size = prime.pow(prime_power as u32) as u32;
-        let resized_power = q / domain_size;
-        let omega = rou.pow(resized_power).unwrap();
-        let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
-        let mut omega_powers = Vec::new();
-        for _ in 0..prime.pow(prime_power as u32) {
-            omega_powers.push(current_omega_power.clone());
-            current_omega_power = &current_omega_power * &omega;
-        }
 
         let poly = &self.poly;
         let mut coeffs = (0..domain_size) // Unclear if the coeficients are order from the least power to the greater, probably is
@@ -121,12 +148,12 @@ impl PolynomialRingZq {
                 Zq::from_z_modulus(&coeff_z, q)
             })
             .collect::<Vec<_>>();
-        radixp_ntt(prime, prime_power, &omega_powers, &mut coeffs);
+        radixp_ntt(prime, prime_power, &domain.omega_powers, &mut coeffs);
 
         coeffs
     }
 
-    fn from_vec(coeffs: Vec<Zq>, modulus: &ModulusPolynomialRingZq) -> Self {
+    fn from_vec(coeffs: &Vec<Zq>, modulus: &ModulusPolynomialRingZq) -> Self {
         let mut poly_desc = format!("{} ", coeffs.len());
         for coeff in coeffs {
             poly_desc = poly_desc + &format!(" {}", coeff.value);
@@ -136,28 +163,13 @@ impl PolynomialRingZq {
     }
 }
 
-fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
-    // Currently only using prime power decomposition, as we might noot need decomposition for all factors in NTT
-    let q = rou.get_mod().to_string().parse::<u64>().unwrap();
+fn crt(coeffs: &mut [Zq], prime: usize, prime_power: usize, domain: &Domain) {
+    let rou = &domain.omega_powers[1];
+    let q = rou.get_mod().to_string().parse::<u32>().unwrap();
+
     let varphi_m = coeffs.len(); // Double check
     let m_prime = varphi_m / (prime - 1);
-    let domain_size = prime.pow(prime_power as u32) as u32;
-    assert_eq!((q - 1) % domain_size as u64, 0);
-    let resize_power = (q - 1) / domain_size as u64;
-    let omega = rou.pow(resize_power).unwrap();
-    let one = Zq::from_z_modulus(&Z::from(1), q);
-    assert_eq!(
-        omega.pow(domain_size).unwrap(),
-        one,
-        "{}-th root of unity not correct",
-        domain_size
-    );
-    let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
-    let mut omega_powers = Vec::new();
-    for _ in 0..prime.pow(prime_power as u32) {
-        omega_powers.push(current_omega_power.clone());
-        current_omega_power = &current_omega_power * &omega;
-    }
+    let omega_powers = &domain.omega_powers;
     let prime_omegas = omega_powers
         .iter()
         .step_by(m_prime)
@@ -249,11 +261,9 @@ fn inverse_crt_prime(prime_omegas: &[Zq]) -> MatZq {
 }
 
 fn euler_totient(prime: usize, prime_power: usize) -> impl Iterator<Item = usize> {
-    let m_prime = prime.pow(prime_power as u32-1);
-    let relative_set = (1..prime)
-        .chain(
-            (1..(m_prime)).flat_map(move |i| i * prime + 1..prime*(i + 1))
-        );
+    let m_prime = prime.pow(prime_power as u32 - 1);
+    let relative_set =
+        (1..prime).chain((1..(m_prime)).flat_map(move |i| i * prime + 1..prime * (i + 1)));
     relative_set
 }
 
@@ -311,7 +321,7 @@ fn radixp_ntt(prime: usize, prime_power: usize, omega_powers: &[Zq], coeffs: &mu
     assert_eq!(prime.pow(prime_power as u32), n);
     let q = omega_powers.first().unwrap().get_mod();
     let zero = Zq::from_z_modulus(&Z::from(0), q);
-    let mut decomposed_coeffs = vec![vec![zero.clone(); n/prime]; prime];
+    let mut decomposed_coeffs = vec![vec![zero.clone(); n / prime]; prime];
 
     for i in 0..n / prime {
         for j in 0..decomposed_coeffs.len() {
@@ -391,12 +401,12 @@ impl PolynomialRingZqCRTBasis {
         &self,
         prime: usize,
         prime_power: usize,
-        rou: Zq,
+        domain: &Domain,
         modulus: &ModulusPolynomialRingZq,
     ) -> PolynomialRingZq {
         let mut coeffs = self.coeffs.clone();
-        icrt(&mut coeffs, prime, prime_power, rou);
-        PolynomialRingZq::from_vec(coeffs, modulus)
+        icrt(&mut coeffs, prime, prime_power, domain);
+        PolynomialRingZq::from_vec(&coeffs, modulus)
     }
 }
 impl Add for &PolynomialRingZqCRTBasis {
@@ -427,28 +437,13 @@ impl Mul for &PolynomialRingZqCRTBasis {
     }
 }
 
-fn icrt(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, rou: Zq) {
+fn icrt(crt_coeffs: &mut [Zq], prime: usize, prime_power: usize, domain: &Domain) {
     // Currently only using prime power decomposition, as we might noot need decomposition for all factors in NTT
-    let q = rou.get_mod().to_string().parse::<u64>().unwrap();
+    let rou = &domain.omega_powers[1];
+    let q = rou.get_mod().to_string().parse::<u32>().unwrap();
     let varphi_m = crt_coeffs.len(); // Double check
     let m_prime = varphi_m / (prime - 1);
-    let domain_size = prime.pow(prime_power as u32) as u32;
-    assert_eq!((q - 1) % domain_size as u64, 0);
-    let resize_power = (q - 1) / domain_size as u64;
-    let omega = rou.pow(resize_power).unwrap();
-    let one = Zq::from_z_modulus(&Z::from(1), q);
-    assert_eq!(
-        omega.pow(domain_size).unwrap(),
-        one,
-        "{}-th root of unity not correct",
-        domain_size
-    );
-    let mut current_omega_power = Zq::from_z_modulus(&Z::from(1), q);
-    let mut omega_powers = Vec::new();
-    for _ in 0..prime.pow(prime_power as u32) {
-        omega_powers.push(current_omega_power.clone());
-        current_omega_power = &current_omega_power * &omega;
-    }
+    let omega_powers = &domain.omega_powers;
     let prime_omegas = omega_powers
         .iter()
         .step_by(m_prime)
@@ -578,7 +573,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let poly_crt = poly.to_crt_basis(prime, prime_power, rou.clone());
+        let domain = Domain::new(prime, prime_power, &rou);
+        let poly_crt = poly.to_crt_basis(prime, prime_power, &domain);
         let crt_coeffs = poly_crt.coeffs;
 
         assert_eq!(crt_coeffs.len(), crt_coeffs_naive.len());
@@ -626,7 +622,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let poly_crt = poly.to_crt_basis(prime, prime_power, rou.clone());
+        let domain = Domain::new(prime, prime_power, &rou);
+        let poly_crt = poly.to_crt_basis(prime, prime_power, &domain);
         let crt_coeffs = poly_crt.coeffs;
 
         assert_eq!(crt_coeffs.len(), crt_coeffs_naive.len());
@@ -639,7 +636,7 @@ mod tests {
     #[test]
     fn crt_mul_po2_test() {
         // Case for m = 2 not handled
-        for prime_power in 4..5 {
+        for prime_power in 4..10 {
             let q = 15 * (1 << 27) + 1;
             let rou = Zq::from((76160998, q as u64)); // Change the root of unity
             let prime = 2;
@@ -648,13 +645,15 @@ mod tests {
             let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
             let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
 
-            let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, rou.clone());
+            let domain = Domain::new(prime, prime_power, &rou);
 
-            let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
+            let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, &domain);
+
+            let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, &domain);
 
             let result_crt_poly = &poly_1_crt * &poly_2_crt;
             let result_poly =
-                result_crt_poly.to_powerful_basis(prime, prime_power, rou, &modulus_poly);
+                result_crt_poly.to_powerful_basis(prime, prime_power, &domain, &modulus_poly);
 
             assert_eq!(
                 result_poly,
@@ -675,12 +674,15 @@ mod tests {
         let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
         let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
 
-        let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, rou.clone());
+        let domain = Domain::new(prime, prime_power, &rou);
 
-        let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
+        let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, &domain);
+
+        let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, &domain);
 
         let result_crt_poly = &poly_1_crt * &poly_2_crt;
-        let result_poly = result_crt_poly.to_powerful_basis(prime, prime_power, rou, &modulus_poly);
+        let result_poly =
+            result_crt_poly.to_powerful_basis(prime, prime_power, &domain, &modulus_poly);
 
         assert_eq!(result_poly, poly_1 * poly_2, "CRT multiplication failed");
     }

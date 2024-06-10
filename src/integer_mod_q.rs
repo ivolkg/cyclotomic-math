@@ -36,3 +36,4 @@ pub use polynomial_ring_zq::PolynomialRingZq;
 pub use polynomial_ring_zq::PolynomialRingZqCRTBasis;
 pub(crate) use z_q::fmpz_mod_helpers;
 pub use z_q::Zq;
+pub use  polynomial_ring_zq::Domain;

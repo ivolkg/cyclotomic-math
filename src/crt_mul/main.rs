@@ -1,6 +1,7 @@
 use qfall_math::integer_mod_q::ModulusPolynomialRingZq;
 use qfall_math::integer_mod_q::PolynomialRingZq;
 use qfall_math::integer_mod_q::Zq;
+use qfall_math::integer_mod_q::Domain;
 use std::str::FromStr;
 fn main() {
     println!("Perform KS multiplication");
@@ -18,12 +19,13 @@ fn crt_mul() {
     let modulus_poly = ModulusPolynomialRingZq::from_str(&mod_poly_desc).unwrap();
     let poly_1 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
     let poly_2 = PolynomialRingZq::sample_uniform(modulus_poly.clone());
-    let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, rou.clone());
 
-    let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, rou.clone());
+    let domain = Domain::new(prime, prime_power, &rou);
+    let poly_1_crt = poly_1.to_crt_basis(prime, prime_power, &domain);
+    let poly_2_crt = poly_2.to_crt_basis(prime, prime_power, &domain);
 
     let result_crt_poly = &poly_1_crt * &poly_2_crt;
-    let _ = result_crt_poly.to_powerful_basis(prime, prime_power, rou.clone(), &modulus_poly);
+    let _ = result_crt_poly.to_powerful_basis(prime, prime_power, &domain, &modulus_poly);
 }
 
 fn ks_mul() {
@@ -53,4 +55,3 @@ fn modulus_poly_description(prime: usize, prime_power: usize, q: usize) -> Strin
     desc = format!("{} {} mod {}", desc, coeffs_string, q);
     desc
 }
-
